@@ -2535,7 +2535,7 @@ function openQrSaveModal(src, filename, blob = null, file = null){
     } else {
         if (title) title.textContent = 'Сохранить QR-код';
         if (subtitle) subtitle.textContent = 'Нажмите «Поделиться / сохранить». Если Android не покажет сохранение, удержите QR-код и выберите сохранение изображения.';
-        if (hint) hint.textContent = 'На Android в Telegram выберите Галерею, Файлы, Диск или «Загрузка или Download» в меню отправки.';
+        if (hint) hint.textContent = 'На Android в Telegram выберите Галерею, Файлы, Диск или «Сохранить изображение» в меню отправки.';
         if (share) share.textContent = 'Поделиться / сохранить';
         if (close) close.textContent = 'Закрыть';
     }
@@ -8330,6 +8330,291 @@ loadData();
 })();
 // ===== /FIX v2605 =====
 </script>
+
+
+<!-- FIX v2607: QR payment save/share without extra Android window -->
+<script>
+(function(){
+    'use strict';
+
+    function qrDeviceInfo2607(){
+        const ua = navigator.userAgent || '';
+        const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isAndroid = /Android/i.test(ua);
+        const isTelegram = Boolean(window.Telegram?.WebApp) || /Telegram/i.test(ua);
+        return {isIOS, isAndroid, isTelegram};
+    }
+
+    function lang2607(ru, en){
+        try { return state.lang === 'en' ? en : ru; } catch (_) { return ru; }
+    }
+
+    function injectQrSaveStyle2607(){
+        if (document.getElementById('qr-save-style-2607')) return;
+        const style = document.createElement('style');
+        style.id = 'qr-save-style-2607';
+        style.textContent = `
+            /* QR должен сохраняться из основного окна, без второго окна на Android */
+            #qr-save-modal{display:none!important;}
+            #payment-qr-image,.detail-qr-image{
+                -webkit-touch-callout:default!important;
+                -webkit-user-select:auto!important;
+                user-select:auto!important;
+                touch-action:auto!important;
+                pointer-events:auto!important;
+            }
+            .qr-save-inline-hint-2607{
+                margin:12px 0 0;
+                padding:13px 14px;
+                border-radius:18px;
+                background:#fff8e8;
+                border:1px solid #ffe0a6;
+                color:#5f4200;
+                font-size:14px;
+                font-weight:900;
+                line-height:1.38;
+                text-align:left;
+                white-space:normal;
+            }
+            .qr-save-inline-hint-2607 b{color:#2b2111;font-weight:950;}
+            #payment-qr-modal.android-qr-2607 #payment-qr-download,
+            .detail-pay-panel.android-qr-2607 .download-qr-btn{
+                display:none!important;
+            }
+            #payment-qr-modal.android-qr-2607 .payment-actions-row,
+            .detail-pay-panel.android-qr-2607 .payment-actions-row{
+                grid-template-columns:1fr!important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function androidHint2607(){
+        return lang2607(
+            '<b>Android:</b> удержите QR-код прямо в этом окне и выберите «Сохранить изображение», «Галерея», «Файлы», «Диск» или «Download». Дополнительное окно больше не открывается.',
+            '<b>Android:</b> press and hold the QR code in this window and choose Save image, Gallery, Files, Drive, or Download. No extra window opens.'
+        );
+    }
+
+    function iosHint2607(){
+        return lang2607(
+            '<b>iPhone:</b> нажмите кнопку «Сохранить QR» — откроется системная панель «Поделиться», затем выберите «Сохранить изображение».',
+            '<b>iPhone:</b> tap “Save QR” to open the system Share panel, then choose Save Image.'
+        );
+    }
+
+    function desktopHint2607(){
+        return lang2607(
+            '<b>QR-код:</b> нажмите «Скачать QR» или сохраните изображение через меню браузера.',
+            '<b>QR code:</b> tap “Download QR” or save the image from the browser menu.'
+        );
+    }
+
+    function currentHint2607(){
+        const info = qrDeviceInfo2607();
+        if (info.isAndroid) return androidHint2607();
+        if (info.isIOS) return iosHint2607();
+        return desktopHint2607();
+    }
+
+    function ensureMainQrHint2607(){
+        injectQrSaveStyle2607();
+        const box = document.querySelector('#payment-qr-modal .qr-box');
+        if (!box) return null;
+        let hint = document.getElementById('payment-qr-save-hint-2607');
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = 'payment-qr-save-hint-2607';
+            hint.className = 'qr-save-inline-hint-2607';
+            const note = document.getElementById('payment-qr-note');
+            if (note) note.insertAdjacentElement('afterend', hint);
+            else box.appendChild(hint);
+        }
+        hint.innerHTML = currentHint2607();
+        return hint;
+    }
+
+    function tuneMainQrButtons2607(){
+        const info = qrDeviceInfo2607();
+        const modal = document.getElementById('payment-qr-modal');
+        const btn = document.getElementById('payment-qr-download');
+        const row = modal?.querySelector('.payment-actions-row');
+        if (modal) modal.classList.toggle('android-qr-2607', info.isAndroid);
+        if (row) row.classList.toggle('android-qr-2607', info.isAndroid);
+        if (btn) {
+            btn.textContent = info.isIOS
+                ? lang2607('Сохранить QR', 'Save QR')
+                : lang2607('Скачать QR', 'Download QR');
+            if (info.isAndroid) btn.setAttribute('aria-hidden', 'true');
+            else btn.removeAttribute('aria-hidden');
+        }
+    }
+
+    function removeExtraQrModal2607(){
+        const modal = document.getElementById('qr-save-modal');
+        if (modal) modal.remove();
+    }
+
+    function showAndroidInstruction2607(){
+        injectQrSaveStyle2607();
+        ensureMainQrHint2607();
+        document.querySelectorAll('.detail-pay-panel').forEach(panel => {
+            if (!panel.querySelector('.detail-qr-image')) return;
+            panel.classList.add('android-qr-2607');
+            let hint = panel.querySelector('.qr-save-inline-hint-2607');
+            if (!hint) {
+                hint = document.createElement('div');
+                hint.className = 'qr-save-inline-hint-2607';
+                const actions = panel.querySelector('.payment-actions-row');
+                if (actions) actions.insertAdjacentElement('beforebegin', hint);
+                else panel.appendChild(hint);
+            }
+            hint.innerHTML = androidHint2607();
+        });
+        const target = document.querySelector('#payment-qr-modal.active #payment-qr-image:not([style*="display: none"])') || document.querySelector('#order-detail-modal.active .detail-qr-image');
+        try { target?.scrollIntoView?.({block:'center', behavior:'smooth'}); } catch (_) {}
+    }
+
+    async function shareQrOnIOS2607(order){
+        if (order) state.currentQrOrder = order;
+        const src = typeof currentPaymentQrDownloadSrc === 'function' ? currentPaymentQrDownloadSrc() : (typeof paymentQrImage === 'function' ? paymentQrImage() : '');
+        if (!src) {
+            tg.showAlert(typeof t === 'function' ? t('paymentQrDownloadError') : 'QR not found');
+            return;
+        }
+        const orderNumber = state.currentQrOrder?.order_number || state.currentQrOrder?.orderNumber || '';
+        const filename = (typeof normalizeDownloadFileName === 'function' ? normalizeDownloadFileName(orderNumber ? `qr-code-order-${orderNumber}` : 'qr-code') : 'qr-code') + '.png';
+        const finalSrc = String(src).startsWith('data:image') || String(src).startsWith('blob:') ? String(src) : (typeof normalizeBackendAssetSrc === 'function' ? normalizeBackendAssetSrc(src) : String(src));
+        const btn = document.getElementById('payment-qr-download') || document.querySelector('[data-download-qr-order]');
+        const oldText = btn?.textContent || '';
+        try {
+            if (btn) { btn.disabled = true; btn.textContent = lang2607('Открываем...', 'Opening...'); }
+            const blob = await qrBlobFromSrc(finalSrc);
+            const file = qrFileFromBlob(blob, filename);
+            const shareData = {files:[file], title:filename, text:filename};
+            if (navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))) {
+                await navigator.share(shareData);
+                return;
+            }
+            if (navigator.share && !String(finalSrc).startsWith('blob:') && !String(finalSrc).startsWith('data:image')) {
+                await navigator.share({title:filename, text:filename, url:finalSrc});
+                return;
+            }
+            tg.showAlert(lang2607('На этом iPhone системная панель недоступна. Удержите QR-код и выберите «Сохранить фото».', 'The Share panel is unavailable here. Press and hold the QR code and choose Save Image.'));
+        } catch (error) {
+            if (error && String(error.name || '').toLowerCase() === 'aborterror') return;
+            console.warn('QR iOS share v2607 error:', error);
+            tg.showAlert(lang2607('Не удалось открыть панель «Поделиться». Удержите QR-код и выберите «Сохранить фото».', 'Could not open Share. Press and hold the QR code and choose Save Image.'));
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = oldText || lang2607('Сохранить QR', 'Save QR'); }
+        }
+    }
+
+    async function desktopDownload2607(order){
+        if (order) state.currentQrOrder = order;
+        const src = typeof currentPaymentQrDownloadSrc === 'function' ? currentPaymentQrDownloadSrc() : (typeof paymentQrImage === 'function' ? paymentQrImage() : '');
+        if (!src) {
+            tg.showAlert(typeof t === 'function' ? t('paymentQrDownloadError') : 'QR not found');
+            return;
+        }
+        const orderNumber = state.currentQrOrder?.order_number || state.currentQrOrder?.orderNumber || '';
+        const filename = (typeof normalizeDownloadFileName === 'function' ? normalizeDownloadFileName(orderNumber ? `qr-code-order-${orderNumber}` : 'qr-code') : 'qr-code') + '.png';
+        const finalSrc = String(src).startsWith('data:image') || String(src).startsWith('blob:') ? String(src) : (typeof normalizeBackendAssetSrc === 'function' ? normalizeBackendAssetSrc(src) : String(src));
+        try {
+            const blob = await qrBlobFromSrc(finalSrc);
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+        } catch (error) {
+            console.warn('QR desktop download v2607 error:', error);
+            tg.showAlert(lang2607('Не удалось скачать QR. Откройте QR-код и сохраните изображение вручную.', 'Could not download QR. Open the QR code and save it manually.'));
+        }
+    }
+
+    const oldOpenPaymentQrModal2607 = typeof openPaymentQrModal === 'function' ? openPaymentQrModal : null;
+    if (oldOpenPaymentQrModal2607) {
+        openPaymentQrModal = function(order = null){
+            const result = oldOpenPaymentQrModal2607.apply(this, arguments);
+            setTimeout(() => {
+                removeExtraQrModal2607();
+                ensureMainQrHint2607();
+                tuneMainQrButtons2607();
+            }, 20);
+            return result;
+        };
+    }
+
+    const oldRenderDetailQrPayment2607 = typeof renderDetailQrPayment === 'function' ? renderDetailQrPayment : null;
+    if (oldRenderDetailQrPayment2607) {
+        renderDetailQrPayment = function(order, canPay){
+            let html = oldRenderDetailQrPayment2607.apply(this, arguments);
+            if (!html || paymentMethodOfOrder(order) !== 'qr') return html;
+            const info = qrDeviceInfo2607();
+            const cls = info.isAndroid ? 'detail-pay-panel android-qr-2607' : 'detail-pay-panel';
+            html = html.replace('class="detail-pay-panel"', `class="${cls}"`);
+            const hint = `<div class="qr-save-inline-hint-2607">${info.isAndroid ? androidHint2607() : (info.isIOS ? iosHint2607() : desktopHint2607())}</div>`;
+            html = html.replace('<div class="payment-actions-row">', hint + '<div class="payment-actions-row">');
+            if (info.isIOS) html = html.replace(/>[^<]*(<\/button>)/, `>${lang2607('Сохранить QR', 'Save QR')}$1`);
+            return html;
+        };
+    }
+
+    // Главный фикс: Android больше не открывает второе окно, iPhone сразу вызывает Share Sheet.
+    downloadQrCode = async function(order = null){
+        if (order) state.currentQrOrder = order;
+        const method = paymentMethodOfOrder(state.currentQrOrder || order || {});
+        if (method !== 'qr') {
+            tg.showAlert(lang2607('Скачать можно только QR-код. Для банковского перевода используйте реквизиты.', 'QR download is available only for QR payment.'));
+            return;
+        }
+        const info = qrDeviceInfo2607();
+        if (info.isAndroid) {
+            showAndroidInstruction2607();
+            tg.showAlert(lang2607('На Android удержите QR-код прямо в этом окне и выберите сохранение изображения. Дополнительное окно больше не открывается.', 'On Android, press and hold the QR code in this window and choose save image. No extra window opens.'));
+            return;
+        }
+        if (info.isIOS) {
+            await shareQrOnIOS2607(order);
+            return;
+        }
+        await desktopDownload2607(order);
+    };
+
+    // Старые вызовы больше не должны показывать дополнительное окно.
+    openQrSaveModal = function(src, filename, blob, file){
+        removeExtraQrModal2607();
+        const info = qrDeviceInfo2607();
+        if (info.isAndroid) {
+            showAndroidInstruction2607();
+            return;
+        }
+        if (info.isIOS) {
+            shareQrOnIOS2607(state.currentQrOrder || null);
+            return;
+        }
+        desktopDownload2607(state.currentQrOrder || null);
+    };
+
+    document.addEventListener('DOMContentLoaded', function(){
+        injectQrSaveStyle2607();
+        removeExtraQrModal2607();
+        tuneMainQrButtons2607();
+    });
+    setTimeout(function(){
+        injectQrSaveStyle2607();
+        removeExtraQrModal2607();
+        ensureMainQrHint2607();
+        tuneMainQrButtons2607();
+    }, 100);
+})();
+</script>
+<!-- /FIX v2607 -->
 
 </body>
 </html>
